@@ -1,0 +1,233 @@
+===== Q1a - Sem indice (varredura da tabela)
+SELECT nome, cpf FROM profissional WHERE cargo = 'Medico'   AND carga_horaria >= 36
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | profissional |  | ALL |  |  |  |  | 10094 | 3.33 | Using where
+
+===== Q1b - Com indice composto em (cargo, carga_horaria)
+SELECT nome, cpf FROM profissional WHERE cargo = 'Medico'   AND carga_horaria >= 36
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | profissional |  | range | idx_prof_cargo_carga | idx_prof_cargo_carga | 166 |  | 2250 | 100.0 | Using index condition
+
+===== Q1c - Com indice de cobertura em (cargo, carga_horaria, nome, cpf): nao precisa ler a tabela
+SELECT nome, cpf FROM profissional WHERE cargo = 'Medico'   AND carga_horaria >= 36
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | profissional |  | range | idx_prof_cobertura | idx_prof_cobertura | 166 |  | 2250 | 100.0 | Using where; Using index
+
+===== Q2a - BETWEEN sem indice
+SELECT id_plantao, data, duracao_h, id_unidade FROM plantao WHERE turno = 'Noite'   AND data BETWEEN DATE '2025-03-01' AND DATE '2025-03-31'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | plantao |  | ALL |  |  |  |  | 83328 | 1.11 | Using where
+
+===== Q2b - BETWEEN com indice em (turno, data)
+SELECT id_plantao, data, duracao_h, id_unidade FROM plantao WHERE turno = 'Noite'   AND data BETWEEN DATE '2025-03-01' AND DATE '2025-03-31'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | plantao |  | range | idx_plantao_turno_data | idx_plantao_turno_data | 45 |  | 1054 | 100.0 | Using index condition
+
+===== Q2c - YEAR()/MONTH() com o mesmo indice (funcao na coluna impede o uso do intervalo)
+SELECT id_plantao, data, duracao_h, id_unidade FROM plantao WHERE turno = 'Noite'   AND YEAR(data) = 2025 AND MONTH(data) = 3
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | plantao |  | ref | idx_plantao_turno_data | idx_plantao_turno_data | 42 | const | 41664 | 100.0 | Using index condition
+
+===== Q3a - JOIN explicito
+SELECT p.id_plantao, p.data, p.turno, u.nome AS unidade FROM plantao p JOIN unidade u ON u.id_unidade = p.id_unidade WHERE u.tipo = 'UPA'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | u |  | ALL | PRIMARY |  |  |  | 40 | 10.0 | Using where
+1 | SIMPLE | p |  | ref | uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 100.0 | Using index
+
+===== Q3b - Juncao no WHERE, com a ordem das relacoes invertida no FROM
+SELECT p.id_plantao, p.data, p.turno, u.nome AS unidade FROM unidade u, plantao p WHERE u.id_unidade = p.id_unidade   AND u.tipo = 'UPA'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | u |  | ALL | PRIMARY |  |  |  | 40 | 10.0 | Using where
+1 | SIMPLE | p |  | ref | uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 100.0 | Using index
+
+===== Q3c - Subconsulta IN no WHERE e subconsulta escalar para o nome da unidade
+SELECT p.id_plantao, p.data, p.turno,        (SELECT u.nome FROM unidade u WHERE u.id_unidade = p.id_unidade) AS unidade FROM plantao p WHERE p.id_unidade IN (SELECT u.id_unidade FROM unidade u WHERE u.tipo = 'UPA')
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | PRIMARY | u |  | ALL | PRIMARY |  |  |  | 40 | 10.0 | Using where
+1 | PRIMARY | p |  | ref | uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 100.0 | Using index
+2 | DEPENDENT SUBQUERY | u |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.p.id_unidade | 1 | 100.0 | 
+
+===== Q4a - JOIN (ordem escolhida pelo otimizador)
+SELECT pr.id_atend, r.nome AS remedio, pr.dose, pr.frequencia FROM prescricao pr JOIN remedio r ON r.id_remedio = pr.id_remedio WHERE r.tarja = 'Preta'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | r |  | ALL | PRIMARY |  |  |  | 154 | 10.0 | Using where
+1 | SIMPLE | pr |  | ref | fk_presc_remedio | fk_presc_remedio | 4 | tp2_plantoes.r.id_remedio | 7333 | 100.0 | 
+
+===== Q4b - STRAIGHT_JOIN forcando a ordem do FROM (prescricao primeiro)
+SELECT pr.id_atend, r.nome AS remedio, pr.dose, pr.frequencia FROM prescricao pr STRAIGHT_JOIN remedio r ON r.id_remedio = pr.id_remedio WHERE r.tarja = 'Preta'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | pr |  | ALL | fk_presc_remedio |  |  |  | 1136688 | 100.0 | 
+1 | SIMPLE | r |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.pr.id_remedio | 1 | 10.0 | Using where
+
+===== Q4c - Tabela derivada que filtra os remedios de tarja Preta antes da juncao
+SELECT pr.id_atend, r.nome AS remedio, pr.dose, pr.frequencia FROM (SELECT id_remedio, nome FROM remedio WHERE tarja = 'Preta') r JOIN prescricao pr ON pr.id_remedio = r.id_remedio
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | remedio |  | ALL | PRIMARY |  |  |  | 154 | 10.0 | Using where
+1 | SIMPLE | pr |  | ref | fk_presc_remedio | fk_presc_remedio | 4 | tp2_plantoes.remedio.id_remedio | 7333 | 100.0 | 
+
+===== Q5a - JOIN sem indice auxiliar
+SELECT pa.nome, pa.cpf, a.data_hora FROM atendimento a JOIN paciente pa ON pa.id_paciente = a.id_paciente WHERE a.tipo = 'Retorno'   AND a.diagnostico = 'Diabetes'   AND pa.data_nasc < DATE '1950-01-01'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | a |  | ALL | fk_atend_paciente |  |  |  | 995365 | 1.0 | Using where
+1 | SIMPLE | pa |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_paciente | 1 | 33.33 | Using where
+
+===== Q5b - JOIN com indice em atendimento (tipo, diagnostico)
+SELECT pa.nome, pa.cpf, a.data_hora FROM atendimento a JOIN paciente pa ON pa.id_paciente = a.id_paciente WHERE a.tipo = 'Retorno'   AND a.diagnostico = 'Diabetes'   AND pa.data_nasc < DATE '1950-01-01'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | a |  | ref | fk_atend_paciente,idx_atend_tipo_diag | idx_atend_tipo_diag | 524 | const,const | 10904 | 100.0 | 
+1 | SIMPLE | pa |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_paciente | 1 | 33.33 | Using where
+
+===== Q5c - STRAIGHT_JOIN forcando comecar por paciente (ordem do FROM invertida)
+SELECT pa.nome, pa.cpf, a.data_hora FROM paciente pa STRAIGHT_JOIN atendimento a ON a.id_paciente = pa.id_paciente WHERE a.tipo = 'Retorno'   AND a.diagnostico = 'Diabetes'   AND pa.data_nasc < DATE '1950-01-01'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | pa |  | ALL | PRIMARY |  |  |  | 199494 | 33.33 | Using where
+1 | SIMPLE | a |  | ref | fk_atend_paciente | fk_atend_paciente | 4 | tp2_plantoes.pa.id_paciente | 5 | 1.0 | Using where
+
+===== Q6a - JOINs encadeados
+SELECT a.id_atend, a.data_hora,        pa.nome AS paciente, pf.nome AS profissional, u.nome AS unidade FROM atendimento a JOIN paciente pa     ON pa.id_paciente = a.id_paciente JOIN profissional pf ON pf.id_prof = a.id_prof JOIN plantao pl      ON pl.id_plantao = a.id_plantao JOIN unidade u       ON u.id_unidade = pl.id_unidade WHERE a.tipo = 'Emergencia'   AND a.diagnostico = 'Fratura'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | a |  | ALL | fk_atend_prof,fk_atend_paciente,fk_atend_plantao |  |  |  | 995365 | 1.0 | Using where
+1 | SIMPLE | pf |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_prof | 1 | 100.0 | 
+1 | SIMPLE | pl |  | eq_ref | PRIMARY,uq_plantao | PRIMARY | 4 | tp2_plantoes.a.id_plantao | 1 | 100.0 | 
+1 | SIMPLE | u |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.pl.id_unidade | 1 | 100.0 | 
+1 | SIMPLE | pa |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_paciente | 1 | 100.0 | 
+
+===== Q6b - Subconsultas escalares correlacionadas no SELECT
+SELECT a.id_atend, a.data_hora,        (SELECT pa.nome FROM paciente pa WHERE pa.id_paciente = a.id_paciente) AS paciente,        (SELECT pf.nome FROM profissional pf WHERE pf.id_prof = a.id_prof) AS profissional,        (SELECT u.nome           FROM plantao pl JOIN unidade u ON u.id_unidade = pl.id_unidade          WHERE pl.id_plantao = a.id_plantao) AS unidade FROM atendimento a WHERE a.tipo = 'Emergencia'   AND a.diagnostico = 'Fratura'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | PRIMARY | a |  | ALL |  |  |  |  | 995365 | 1.0 | Using where
+4 | DEPENDENT SUBQUERY | pl |  | eq_ref | PRIMARY,uq_plantao | PRIMARY | 4 | tp2_plantoes.a.id_plantao | 1 | 100.0 | 
+4 | DEPENDENT SUBQUERY | u |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.pl.id_unidade | 1 | 100.0 | 
+3 | DEPENDENT SUBQUERY | pf |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_prof | 1 | 100.0 | 
+2 | DEPENDENT SUBQUERY | pa |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_paciente | 1 | 100.0 | 
+
+===== Q6c - JOINs encadeados com indice em atendimento (tipo, diagnostico)
+SELECT a.id_atend, a.data_hora,        pa.nome AS paciente, pf.nome AS profissional, u.nome AS unidade FROM atendimento a JOIN paciente pa     ON pa.id_paciente = a.id_paciente JOIN profissional pf ON pf.id_prof = a.id_prof JOIN plantao pl      ON pl.id_plantao = a.id_plantao JOIN unidade u       ON u.id_unidade = pl.id_unidade WHERE a.tipo = 'Emergencia'   AND a.diagnostico = 'Fratura'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | a |  | ref | fk_atend_prof,fk_atend_paciente,fk_atend_plantao,idx_atend_tipo_diag | idx_atend_tipo_diag | 524 | const,const | 35514 | 100.0 | 
+1 | SIMPLE | pf |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_prof | 1 | 100.0 | 
+1 | SIMPLE | pl |  | eq_ref | PRIMARY,uq_plantao | PRIMARY | 4 | tp2_plantoes.a.id_plantao | 1 | 100.0 | 
+1 | SIMPLE | u |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.pl.id_unidade | 1 | 100.0 | 
+1 | SIMPLE | pa |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_paciente | 1 | 100.0 | 
+
+===== Q7a - JOIN com DISTINCT
+SELECT DISTINCT p.id_paciente, p.nome, p.data_nasc FROM paciente p JOIN atendimento a                ON a.id_paciente = p.id_paciente JOIN profissional_especialidade e ON e.id_prof = a.id_prof WHERE e.especialidade = 'Pediatria'   AND a.data_hora >= TIMESTAMP '2025-01-01 00:00:00'   AND a.data_hora <  TIMESTAMP '2026-01-01 00:00:00'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | e |  | index | PRIMARY | PRIMARY | 246 |  | 8451 | 10.0 | Using where; Using index; Using temporary
+1 | SIMPLE | a |  | ref | fk_atend_prof,fk_atend_paciente | fk_atend_prof | 4 | tp2_plantoes.e.id_prof | 131 | 11.11 | Using where
+1 | SIMPLE | p |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.a.id_paciente | 1 | 100.0 | 
+
+===== Q7b - Subconsulta com EXISTS
+SELECT p.id_paciente, p.nome, p.data_nasc FROM paciente p WHERE EXISTS (     SELECT 1     FROM atendimento a     JOIN profissional_especialidade e ON e.id_prof = a.id_prof     WHERE a.id_paciente = p.id_paciente       AND e.especialidade = 'Pediatria'       AND a.data_hora >= TIMESTAMP '2025-01-01 00:00:00'       AND a.data_hora <  TIMESTAMP '2026-01-01 00:00:00' )
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | <subquery2> |  | ALL |  |  |  |  |  | 100.0 | 
+1 | SIMPLE | p |  | eq_ref | PRIMARY | PRIMARY | 4 | <subquery2>.id_paciente | 1 | 100.0 | 
+2 | MATERIALIZED | e |  | index | PRIMARY | PRIMARY | 246 |  | 8451 | 10.0 | Using where; Using index
+2 | MATERIALIZED | a |  | ref | fk_atend_prof,fk_atend_paciente | fk_atend_prof | 4 | tp2_plantoes.e.id_prof | 131 | 11.11 | Using where
+
+===== Q7c - Subconsulta com IN
+SELECT p.id_paciente, p.nome, p.data_nasc FROM paciente p WHERE p.id_paciente IN (     SELECT a.id_paciente     FROM atendimento a     JOIN profissional_especialidade e ON e.id_prof = a.id_prof     WHERE e.especialidade = 'Pediatria'       AND a.data_hora >= TIMESTAMP '2025-01-01 00:00:00'       AND a.data_hora <  TIMESTAMP '2026-01-01 00:00:00' )
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | <subquery2> |  | ALL |  |  |  |  |  | 100.0 | 
+1 | SIMPLE | p |  | eq_ref | PRIMARY | PRIMARY | 4 | <subquery2>.id_paciente | 1 | 100.0 | 
+2 | MATERIALIZED | e |  | index | PRIMARY | PRIMARY | 246 |  | 8451 | 10.0 | Using where; Using index
+2 | MATERIALIZED | a |  | ref | fk_atend_prof,fk_atend_paciente | fk_atend_prof | 4 | tp2_plantoes.e.id_prof | 131 | 11.11 | Using where
+
+===== Q8a - JOINs sem indice auxiliar
+SELECT pf.nome AS profissional, pf.cpf, pl.data, u.nome AS unidade FROM profissional pf JOIN escalado_em e ON e.id_prof = pf.id_prof JOIN plantao pl    ON pl.id_plantao = e.id_plantao JOIN unidade u     ON u.id_unidade = pl.id_unidade WHERE e.funcao = 'Coordenador'   AND pl.turno = 'Noite'   AND pl.data BETWEEN DATE '2025-01-01' AND DATE '2025-12-31'   AND u.tipo = 'UPA'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | u |  | ALL | PRIMARY |  |  |  | 40 | 10.0 | Using where
+1 | SIMPLE | pl |  | ref | PRIMARY,uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 1.11 | Using where; Using index
+1 | SIMPLE | e |  | ref | PRIMARY,fk_esc_plantao | fk_esc_plantao | 4 | tp2_plantoes.pl.id_plantao | 2 | 10.0 | Using where
+1 | SIMPLE | pf |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.e.id_prof | 1 | 100.0 | 
+
+===== Q8b - JOINs com indice em plantao (turno, data)
+SELECT pf.nome AS profissional, pf.cpf, pl.data, u.nome AS unidade FROM profissional pf JOIN escalado_em e ON e.id_prof = pf.id_prof JOIN plantao pl    ON pl.id_plantao = e.id_plantao JOIN unidade u     ON u.id_unidade = pl.id_unidade WHERE e.funcao = 'Coordenador'   AND pl.turno = 'Noite'   AND pl.data BETWEEN DATE '2025-01-01' AND DATE '2025-12-31'   AND u.tipo = 'UPA'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | u |  | ALL | PRIMARY |  |  |  | 40 | 10.0 | Using where
+1 | SIMPLE | pl |  | ref | PRIMARY,uq_plantao,idx_plantao_turno_data | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 27.76 | Using where; Using index
+1 | SIMPLE | e |  | ref | PRIMARY,fk_esc_plantao | fk_esc_plantao | 4 | tp2_plantoes.pl.id_plantao | 2 | 10.0 | Using where
+1 | SIMPLE | pf |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.e.id_prof | 1 | 100.0 | 
+
+===== Q8c - STRAIGHT_JOIN forcando a ordem unidade -> plantao -> escalado_em -> profissional
+SELECT pf.nome AS profissional, pf.cpf, pl.data, u.nome AS unidade FROM unidade u STRAIGHT_JOIN plantao pl    ON pl.id_unidade = u.id_unidade STRAIGHT_JOIN escalado_em e ON e.id_plantao = pl.id_plantao STRAIGHT_JOIN profissional pf ON pf.id_prof = e.id_prof WHERE e.funcao = 'Coordenador'   AND pl.turno = 'Noite'   AND pl.data BETWEEN DATE '2025-01-01' AND DATE '2025-12-31'   AND u.tipo = 'UPA'
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | u |  | ALL | PRIMARY |  |  |  | 40 | 10.0 | Using where
+1 | SIMPLE | pl |  | ref | PRIMARY,uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 1.11 | Using where; Using index
+1 | SIMPLE | e |  | ref | PRIMARY,fk_esc_plantao | fk_esc_plantao | 4 | tp2_plantoes.pl.id_plantao | 2 | 10.0 | Using where
+1 | SIMPLE | pf |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.e.id_prof | 1 | 100.0 | 
+
+===== Q9a - JOIN das tres relacoes e depois GROUP BY
+SELECT u.id_unidade, u.nome, COUNT(*) AS total_atendimentos FROM atendimento a JOIN plantao p ON p.id_plantao = a.id_plantao JOIN unidade u ON u.id_unidade = p.id_unidade GROUP BY u.id_unidade, u.nome HAVING COUNT(*) > 30000 ORDER BY total_atendimentos DESC
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | u |  | index | PRIMARY,uq_unidade_nome | uq_unidade_nome | 402 |  | 40 | 100.0 | Using index; Using temporary; Using filesort
+1 | SIMPLE | p |  | ref | PRIMARY,uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 100.0 | Using index
+1 | SIMPLE | a |  | ref | fk_atend_plantao | fk_atend_plantao | 4 | tp2_plantoes.p.id_plantao | 11 | 100.0 | Using index
+
+===== Q9b - Agrega primeiro numa tabela derivada e so depois junta com unidade
+SELECT u.id_unidade, u.nome, t.total_atendimentos FROM unidade u JOIN (SELECT p.id_unidade, COUNT(*) AS total_atendimentos         FROM atendimento a         JOIN plantao p ON p.id_plantao = a.id_plantao        GROUP BY p.id_unidade       HAVING COUNT(*) > 30000) t ON t.id_unidade = u.id_unidade ORDER BY t.total_atendimentos DESC
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | PRIMARY | u |  | index | PRIMARY | uq_unidade_nome | 402 |  | 40 | 100.0 | Using index; Using temporary; Using filesort
+1 | PRIMARY | <derived2> |  | ref | <auto_key0> | <auto_key0> | 4 | tp2_plantoes.u.id_unidade | 9959 | 100.0 | 
+2 | DERIVED | p |  | index | PRIMARY,uq_plantao | uq_plantao | 49 |  | 83328 | 100.0 | Using index
+2 | DERIVED | a |  | ref | fk_atend_plantao | fk_atend_plantao | 4 | tp2_plantoes.p.id_plantao | 11 | 100.0 | Using index
+
+===== Q9c - Subconsulta correlacionada que conta os atendimentos de cada unidade
+SELECT id_unidade, nome, total_atendimentos FROM (SELECT u.id_unidade, u.nome,              (SELECT COUNT(*)                 FROM atendimento a                 JOIN plantao p ON p.id_plantao = a.id_plantao                WHERE p.id_unidade = u.id_unidade) AS total_atendimentos         FROM unidade u) t WHERE total_atendimentos > 30000 ORDER BY total_atendimentos DESC
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | PRIMARY | <derived2> |  | ALL |  |  |  |  | 40 | 33.33 | Using where; Using filesort
+2 | DERIVED | u |  | index |  | uq_unidade_nome | 402 |  | 40 | 100.0 | Using index
+3 | DEPENDENT SUBQUERY | p |  | ref | PRIMARY,uq_plantao | uq_plantao | 4 | tp2_plantoes.u.id_unidade | 2192 | 100.0 | Using index
+3 | DEPENDENT SUBQUERY | a |  | ref | fk_atend_plantao | fk_atend_plantao | 4 | tp2_plantoes.p.id_plantao | 11 | 100.0 | Using index
+
+===== Q10a - JOIN das tres relacoes
+SELECT r.id_remedio, r.nome, r.principio_ativo, COUNT(*) AS total_prescricoes FROM prescricao pr JOIN atendimento a ON a.id_atend = pr.id_atend JOIN remedio r     ON r.id_remedio = pr.id_remedio WHERE a.tipo = 'Emergencia' GROUP BY r.id_remedio, r.nome, r.principio_ativo ORDER BY total_prescricoes DESC, r.id_remedio LIMIT 10
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | a |  | ALL | PRIMARY |  |  |  | 995365 | 10.0 | Using where; Using temporary; Using filesort
+1 | SIMPLE | pr |  | ref | PRIMARY,fk_presc_remedio | PRIMARY | 4 | tp2_plantoes.a.id_atend | 1 | 100.0 | Using index
+1 | SIMPLE | r |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.pr.id_remedio | 1 | 100.0 | 
+
+===== Q10b - Subconsulta IN no lugar da juncao com atendimento
+SELECT r.id_remedio, r.nome, r.principio_ativo, COUNT(*) AS total_prescricoes FROM prescricao pr JOIN remedio r ON r.id_remedio = pr.id_remedio WHERE pr.id_atend IN (SELECT a.id_atend FROM atendimento a WHERE a.tipo = 'Emergencia') GROUP BY r.id_remedio, r.nome, r.principio_ativo ORDER BY total_prescricoes DESC, r.id_remedio LIMIT 10
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | a |  | ALL | PRIMARY |  |  |  | 995365 | 10.0 | Using where; Using temporary; Using filesort
+1 | SIMPLE | pr |  | ref | PRIMARY,fk_presc_remedio | PRIMARY | 4 | tp2_plantoes.a.id_atend | 1 | 100.0 | Using index
+1 | SIMPLE | r |  | eq_ref | PRIMARY | PRIMARY | 4 | tp2_plantoes.pr.id_remedio | 1 | 100.0 | 
+
+===== Q10c - JOIN das tres relacoes com indice em atendimento (tipo)
+SELECT r.id_remedio, r.nome, r.principio_ativo, COUNT(*) AS total_prescricoes FROM prescricao pr JOIN atendimento a ON a.id_atend = pr.id_atend JOIN remedio r     ON r.id_remedio = pr.id_remedio WHERE a.tipo = 'Emergencia' GROUP BY r.id_remedio, r.nome, r.principio_ativo ORDER BY total_prescricoes DESC, r.id_remedio LIMIT 10
+
+id | select_type | table | partitions | type | possible_keys | key | key_len | ref | rows | filtered | Extra
+1 | SIMPLE | r |  | ALL | PRIMARY |  |  |  | 154 | 100.0 | Using temporary; Using filesort
+1 | SIMPLE | pr |  | ref | PRIMARY,fk_presc_remedio | fk_presc_remedio | 4 | tp2_plantoes.r.id_remedio | 7333 | 100.0 | Using index
+1 | SIMPLE | a |  | eq_ref | PRIMARY,idx_atend_tipo | PRIMARY | 4 | tp2_plantoes.pr.id_atend | 1 | 50.0 | Using where
+
